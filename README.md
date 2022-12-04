@@ -1,6 +1,6 @@
 # My cloud-devops projects
 
-#### This repository will keep records of my alx/udacity cloud devops engineering nanodegree praogram projects.
+#### This repository will keep records of my alx/udacity cloud devops engineering nanodegree program projects.
 
 #### Projects include:
 
