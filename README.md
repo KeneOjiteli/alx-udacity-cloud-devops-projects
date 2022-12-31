@@ -5,3 +5,4 @@
 #### Projects include:
 
 #### - Hosting a static site with S3 and distributing via Cloudfront, which is a global content delivery network
+#### - Deploying a high-availability web-app using CloudFormation (an Infrastructure as Code tool)
