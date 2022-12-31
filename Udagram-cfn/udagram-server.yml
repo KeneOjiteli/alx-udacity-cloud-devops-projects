@@ -1,0 +1,203 @@
+Description : 
+    This cloudformation script is going to deploy server infrastructure for a high availability web-app (Udagram)
+
+Parameters :
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+
+    VPC :
+        Type : String
+        Description : Enter IP range (CIDR notation) for this VPC
+        Default : 10.0.0.0/16
+        
+    ImageId:
+        Description: Ubuntu AMI ID
+        Type: String
+        Default: ami-0574da719dca65348
+
+    MinCapacityASG :
+        Type : String
+        Description : Minimum number of instances when ASG is launched
+        Default: 3
+
+    DesiredCapacityASG :
+        Type : String
+        Description : the initial capacity when the ASG is launched and the capacity it attempts to maintain
+        Default : 3
+
+    MaxCapacityASG :
+        Type : String
+        Description : Maximum number of instances when ASG is launched
+        Default : 5
+
+Resources :
+    # IAM Role For s3 and ec2 to interact
+    EC2andS3Role :
+        Type : AWS::IAM::Role
+        Properties :
+            RoleName : S3ReadAccessForEC2
+            AssumeRolePolicyDocument :
+                Version : "2012-10-17"
+                Statement :
+                    - Effect : "Allow"
+                      Principal :
+                          Service :
+                              - "ec2.amazonaws.com"
+                      Action :
+                          - "sts:AssumeRole"  
+            Policies :
+                - PolicyName : "S3BucketAccessPolicy"
+                  PolicyDocument :
+                      Version : "2012-10-17"
+                      Statement :
+                          - Effect : "Allow"
+                            Action :
+                                - "s3:GetObject"
+                            Resource: "*"  
+
+    #Instance Profile
+    EC2InstanceProfile : 
+        Type : AWS::IAM::InstanceProfile
+        Properties :
+            Roles :
+                - !Ref EC2andS3Role
+        DependsOn : EC2andS3Role    
+
+    #Load balancer security group
+    LBSecurityGroup :
+        Type : AWS::EC2::SecurityGroup
+        Properties :
+            GroupDescription : Load balancer Security group that allows http to LB
+            VpcId : 
+                Fn::ImportValue: 
+                    !Sub "${EnvironmentName}-VPCID"
+            SecurityGroupIngress:
+            - IpProtocol : tcp
+              FromPort : 80
+              ToPort : 80
+              CidrIp : 0.0.0.0/0
+            SecurityGroupEgress:
+            - IpProtocol : tcp
+              FromPort : 80
+              ToPort : 80
+              CidrIp : 0.0.0.0/0
+    
+    #Server security group
+    WebServerSecurityGroup :
+        Type : AWS::EC2::SecurityGroup
+        Properties :
+            GroupDescription : Web Server Security group that allows http to our hosts and SSH from local only
+            VpcId : 
+                Fn::ImportValue: 
+                    !Sub "${EnvironmentName}-VPCID"
+            SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              CidrIp: 0.0.0.0/0
+            - IpProtocol: tcp
+              FromPort: 22
+              ToPort: 22
+              CidrIp: 0.0.0.0/0
+            SecurityGroupEgress:
+            - IpProtocol: tcp
+              FromPort: 0
+              ToPort: 65535
+              CidrIp: 0.0.0.0/0
+
+    #Launch config for auto scaling group
+    WepAppLaunchConfig :
+        Type : AWS::AutoScaling::LaunchConfiguration
+        Properties : 
+            UserData :
+                Fn::Base64: !Sub |
+                    #!/bin/bash
+                    sudo apt-get update -y
+                    sudo apt-get install unzip awscli -y
+                    sudo apt-get install apache2 -y
+                    sudo systemctl start apache2.service
+                    cd /var/www/html
+                    aws s3 cp s3://udagram-257375614114-bucket/index.html .
+                   
+            ImageId : !Ref ImageId
+            IamInstanceProfile : !Ref EC2InstanceProfile
+            SecurityGroups : 
+            - Ref : WebServerSecurityGroup
+            InstanceType : t3.medium
+            BlockDeviceMappings :
+            - DeviceName : "/dev/sdk"
+              Ebs :
+                  VolumeSize : "10"
+
+    #Auto scaling group
+    WebAppASG :
+        Type : AWS::AutoScaling::AutoScalingGroup
+        Properties :
+            LaunchConfigurationName : !Ref WepAppLaunchConfig
+            VPCZoneIdentifier :
+                - Fn::ImportValue : !Sub "${EnvironmentName}-PrivateSubnet1"
+                - Fn::ImportValue : !Sub "${EnvironmentName}-PrivateSubnet2"
+            MinSize : !Sub ${MinCapacityASG}
+            MaxSize : !Sub ${MaxCapacityASG}
+            DesiredCapacity : !Sub ${DesiredCapacityASG}
+            HealthCheckGracePeriod : 10
+            TargetGroupARNs : 
+                - Ref: WebAppTG
+
+    #Target group for load balancer
+    WebAppTG :
+        Type : AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties :
+            HealthCheckIntervalSeconds : 10
+            HealthCheckPath : "/"
+            HealthCheckProtocol : "HTTP"
+            HealthCheckTimeoutSeconds : 8
+            HealthyThresholdCount : 2
+            Port : 80
+            Protocol : HTTP
+            UnhealthyThresholdCount: 5
+            VpcId :
+                Fn::ImportValue:
+                    Fn::Sub : "${EnvironmentName}-VPCID"
+
+    #Load balancer
+    WebAppLB :
+        Type : AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties :
+            Subnets :
+                - Fn::ImportValue: !Sub "${EnvironmentName}-PublicSubnet1"
+                - Fn::ImportValue: !Sub "${EnvironmentName}-PublicSubnet2"
+            SecurityGroups : 
+                - Ref: LBSecurityGroup
+    
+    #Load balancer listener
+    WebAppLBListener :
+        Type : AWS::ElasticLoadBalancingV2::Listener
+        Properties :
+            DefaultActions :
+                - Type : forward
+                  TargetGroupArn : !Ref WebAppTG
+            LoadBalancerArn : !Ref WebAppLB
+            Port : 80
+            Protocol: "HTTP"
+
+    #Load balancer listener rule
+    WebAppLBListenerRule :
+        Type: "AWS::ElasticLoadBalancingV2::ListenerRule"
+        Properties :
+            Actions :
+                - Type : forward
+                  TargetGroupArn : !Ref WebAppTG
+            Conditions :
+                - Field: path-pattern
+                  Values : [/]
+            ListenerArn: !Ref WebAppLBListener
+            Priority: 1
+
+Outputs :
+    AppURL:
+        Description: This URL will contain the Load Balancer DNS Name to view Udagram app
+        Export:
+            Name : LB-DNS-NAME
+        Value: !Join [ "://", [ "http", !GetAtt WebAppLB.DNSName ] ]

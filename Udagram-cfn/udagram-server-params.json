@@ -1,0 +1,22 @@
+[
+    {
+		"ParameterKey": "EnvironmentName",
+		"ParameterValue": "UdacityProject"
+	},
+    {
+        "ParameterKey": "ImageId",
+        "ParameterValue": "ami-0574da719dca65348"
+    },
+    {
+        "ParameterKey" : "MinCapacityASG",
+        "ParameterValue" : "3"
+    },
+    {
+        "ParameterKey" : "DesiredCapacityASG",
+        "ParameterValue" : "3"
+    },
+    {
+        "ParameterKey" : "MaxCapacityASG",
+        "ParameterValue" : "5"
+    }
+]
